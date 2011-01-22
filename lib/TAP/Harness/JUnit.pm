@@ -217,7 +217,7 @@ sub parsetest {
 
     if ($ok eq 'not ok') {
       $test->{failure} = [
-        { type    => 'test',
+        { type    => 'TAP::Parser::Result::Test',
           message => $raw,
           content => $comment,
         }
@@ -232,64 +232,74 @@ sub parsetest {
   while (my $l = <$tap_handle>) {
     $output .= $l;
     chomp($l);
-    
+
     my $desc = '';
-    if ($l =~ /^\s*1[.][.](\d+)/) { ## Plan
+    if ($l =~ /^\s*1[.][.](\d+)/) {    ## Plan
       $expected_count += $1;
     }
-    elsif ($l =~ /^# (.*)/) { ## Comment
-      $comment .= $1;
-      $bad = $comment if $l =~ m/Looks like your test died/;
+    elsif ($l =~ /^# (.*)/) {          ## Comment
+      $comment .= "$1\n";
+      $bad = $1 if $l =~ m/Looks like your test died/;
     }
-    elsif ($l =~ m/^(\s*)($ok) \ ($num) (?:\ ([^#]+))? \z/x) { ## simple test
+    elsif ($l =~ m/^(\s*)($ok) \ ($num) (?:\ ([^#]+))? \z/x) {  ## simple test
       my ($level, $ok, $num, $desc) = ($1, $2, $3, $4);
 
       $tcb->($l, $level, $ok, $num, $desc);
     }
-    elsif ($l =~ m/^(\s*)($ok) \s* ($num)? \s* (.*) \z/x) { ## test (TODO/SKIP)
+    elsif ($l =~ m/^(\s*)($ok) \s* ($num)? \s* (.*) \z/x)
+    {    ## test (TODO/SKIP)
       my ($level, $ok, $num, $desc, $dir, $exp) = ($1, $2, $3, $4, '', '');
-      if ($desc =~ m/^ ( [^\\\#]* (?: \\. [^\\\#]* )* ) \# \s* (SKIP|TODO) \b \s* (.*) $/ix) {
+      if ($desc
+        =~ m/^ ( [^\\\#]* (?: \\. [^\\\#]* )* ) \# \s* (SKIP|TODO) \b \s* (.*) $/ix
+        )
+      {
         ($desc, $dir, $exp) = ($1, $2, $3);
       }
       next if $dir;
-      
+
       $tcb->($l, $level, $ok, $num, $desc, $dir, $exp);
     }
   }
-  
-	close ($tap_handle);
 
-	$xml->{'tests'} = $test_count;
-	$xml->{'system-out'} = [$output];
-	
-	# Detect no plan
-	if ($test_count != $expected_count) {
-		push @{$xml->{testcase}}, {
-			'time' => 0,
-			name => uniquename($xml, 'Bad plan'),
-			classname => $name,
-			failure => {
-				type => 'Plan',
-				message => "Bad plan, saw $test_count, expected $expected_count",
-				content => 'Bad plan',
-			},
-		};
-		$xml->{errors}++;
-	}
+  close($tap_handle);
 
-	if ($bad and not $xml->{errors}) {
-		push @{$xml->{testcase}}, {
-			'time' => 0,
-			name => uniquename ($xml, 'Test returned failure'),
-			classname => $name,
-			failure => {
-				type => 'Died',
-				message => $bad,
-				content => $bad,
-			},
-		};
-		$xml->{errors}++;
-	}
+  $xml->{'tests'}      = $test_count;
+  $xml->{'system-out'} = [$output];
+
+  # Detect no plan
+  if ($test_count != $expected_count) {
+    push @{$xml->{testcase}},
+      {
+      'time' => 0,
+      name => uniquename($xml, 'Number of runned tests does not match plan.'),
+      classname =>
+        'Has a plan, successful tests, just too small amount of them',
+      failure => {
+        type    => 'Plan',
+        message => "Some test were not executed, The test died prematurely.",
+        content => 'Bad plan',
+      },
+      };
+    $xml->{errors}++;
+
+    $xml->{failures} = $expected_count - $test_count;
+    $xml->{tests}    = $expected_count;
+  }
+
+  if ($bad and not $xml->{errors}) {
+    push @{$xml->{testcase}},
+      {
+      'time'    => 0,
+      name      => uniquename($xml, 'Test returned failure'),
+      classname => $name,
+      failure   => {
+        type    => 'Died',
+        message => $bad,
+        content => $bad,
+      },
+      };
+    $xml->{errors}++;
+  }
 
 	# Make up times for sub-tests
 	if ($time) {
