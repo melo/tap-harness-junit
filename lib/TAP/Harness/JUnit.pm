@@ -32,7 +32,6 @@ use base 'TAP::Harness';
 
 use Benchmark ':hireswallclock';
 use File::Temp;
-use TAP::Parser;
 use XML::Simple;
 use Scalar::Util qw/blessed/;
 use Encode;
@@ -188,123 +187,101 @@ sub parsetest {
 		tests => undef,
 		'time' => $time,
 		testcase => [],
-		'system-out' => [''],
 	};
 
-	open (my $tap_handle, $self->{__rawtapdir}.'/'.$file)
+	open(my $tap_handle, '<', join('/', $self->{__rawtapdir}, $file))
 		or die $!;
-	my $rawtap = join ('', <$tap_handle>);
+
+  my $test_count     = 0;
+  my $expected_count = 0;
+  my $output         = '';
+  my $comment        = '';
+  my $bad;
+  my $ok  = qr/(?:not )?ok\b/;
+  my $num = qr/\d+/;
+  
+  my $tcb = sub {
+    my ($raw, $level, $ok, $num, $desc, $dir, $exp) = (@_, '', '');
+
+    $test_count++;
+
+    my $test = {
+      'time'    => 0,
+      name      => uniquename($xml, "$test_count $desc"),
+      classname => $name,
+    };
+
+    if ($ok eq 'not ok') {
+      $test->{failure} = [
+        { type    => 'test',
+          message => $raw,
+          content => $comment,
+        }
+      ];
+      $xml->{errors}++;
+    }
+    
+    push @{$xml->{testcase}}, $test;
+		$comment = '';
+  };
+  
+  while (my $l = <$tap_handle>) {
+    $output .= $l;
+    chomp($l);
+    
+    my $desc = '';
+    if ($l =~ /^\s*1[.][.](\d+)/) { ## Plan
+      $expected_count += $1;
+    }
+    elsif ($l =~ /^# (.*)/) { ## Comment
+      $comment .= $1;
+      $bad = $comment if $l =~ m/Looks like your test died/;
+    }
+    elsif ($l =~ m/^(\s*)($ok) \ ($num) (?:\ ([^#]+))? \z/x) { ## simple test
+      my ($level, $ok, $num, $desc) = ($1, $2, $3, $4);
+
+      $tcb->($l, $level, $ok, $num, $desc);
+    }
+    elsif ($l =~ m/^(\s*)($ok) \s* ($num)? \s* (.*) \z/x) { ## test (TODO/SKIP)
+      my ($level, $ok, $num, $desc, $dir, $exp) = ($1, $2, $3, $4, '', '');
+      if ($desc =~ m/^ ( [^\\\#]* (?: \\. [^\\\#]* )* ) \# \s* (SKIP|TODO) \b \s* (.*) $/ix) {
+        ($desc, $dir, $exp) = ($1, $2, $3);
+      }
+      next if $dir;
+      
+      $tcb->($l, $level, $ok, $num, $desc, $dir, $exp);
+    }
+  }
+  
 	close ($tap_handle);
-	# TAP::Parser refuses to construct a TAP stream from an empty string
-	$rawtap = "\n" unless $rawtap;
 
-	# Reset the parser, so we can reparse the output, iterating through it
-	$parser = new TAP::Parser ({'tap' => $rawtap });
-
-	my $tests_run = 0;
-	my $comment = ''; # Comment agreggator
-	while ( my $result = $parser->next ) {
-
-		# Counters
-		if ($result->type eq 'plan') {
-			$xml->{tests} = $result->tests_planned;
-		}
-
-		# Comments
-		if ($result->type eq 'comment') {
-			# See BUGS
-			$badretval = $result if $result->comment =~ /Looks like your test died/;
-
-			#$comment .= $result->comment."\n";
-			# ->comment has leading whitespace stripped
-			$result->raw =~ /^# (.*)/ and $comment .= $1."\n";
-		}
-
-		# Errors
-		if ($result->type eq 'unknown') {
-			$comment .= $result->raw."\n";
-		}
-
-		# Test case
-		if ($result->type eq 'test') {
-			$tests_run++;
-
-			# JUnit can't express these -- pretend they do not exist
-			$result->directive eq 'TODO' and next;
-			$result->directive eq 'SKIP' and next;
-
-			my $test = {
-				'time' => 0,
-				name => uniquename ($xml, $result->description),
-				classname => $name,
-			};
-
-			if ($result->ok eq 'not ok') {
-				$test->{failure} = [{
-					type => blessed ($result),
-					message => $result->raw,
-					content => $comment,
-				}];
-				$xml->{errors}++;
-			};
-
-			push @{$xml->{testcase}}, $test;
-			$comment = '';
-		}
-
-		# Log
-		$xml->{'system-out'}->[0] .= $result->raw."\n";
-	}
-
+	$xml->{'tests'} = $test_count;
+	$xml->{'system-out'} = [$output];
+	
 	# Detect no plan
-	unless (defined $xml->{tests}) {
-		# Ensure XML will have non-empty value
-		$xml->{tests} = 0;
-
-		# Fake a failed test
+	if ($test_count != $expected_count) {
 		push @{$xml->{testcase}}, {
 			'time' => 0,
-			name => uniquename ($xml, 'Test died too soon, even before plan.'),
+			name => uniquename($xml, 'Bad plan'),
 			classname => $name,
 			failure => {
 				type => 'Plan',
-				message => 'The test suite died before a plan was produced. You need to have a plan.',
-				content => 'No plan',
-			},
-		};
-		$xml->{errors}++;
-	}
-
-	# Detect bad plan
-	elsif ($xml->{failures} = $xml->{tests} - $tests_run) {
-		# Fake a failed test
-		push @{$xml->{testcase}}, {
-			'time' => 0,
-			name => uniquename ($xml, 'Number of runned tests does not match plan.'),
-			classname => $name,
-			failure => {
-				type => 'Plan',
-				message => ($xml->{failures} > 0
-					? 'Some test were not executed, The test died prematurely.'
-					: 'Extra tests tun.'),
+				message => "Bad plan, saw $test_count, expected $expected_count",
 				content => 'Bad plan',
 			},
 		};
 		$xml->{errors}++;
-		$xml->{failures} = abs ($xml->{failures});
 	}
 
-	# Bad return value. See BUGS
-	elsif ($badretval and not $xml->{errors}) {
-		# Fake a failed test
+	if ($bad and not $xml->{errors}) {
 		push @{$xml->{testcase}}, {
 			'time' => 0,
 			name => uniquename ($xml, 'Test returned failure'),
 			classname => $name,
 			failure => {
 				type => 'Died',
-				message => $badretval->comment,
-				content => $badretval->raw,
+				message => $bad,
+				content => $bad,
 			},
 		};
 		$xml->{errors}++;
