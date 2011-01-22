@@ -103,7 +103,8 @@ sub new {
 	$rawtapdir = File::Temp::tempdir() unless $rawtapdir;
 	delete $args->{rawtapdir};
 
-	my $notimes = delete $args->{notimes};
+  my $notimes    = delete $args->{notimes};
+  my $label_desc = delete $args->{label_desc};
 
 	my $self = $class->SUPER::new($args);
 	$self->{__xmlfile} = $xmlfile;
@@ -111,6 +112,7 @@ sub new {
 	$self->{__rawtapdir} = $rawtapdir;
 	$self->{__cleantap} = not defined $ENV{PERL_TEST_HARNESS_DUMP_TAP};
 	$self->{__notimes} = $notimes;
+	$self->{__desc_with_test_count} = $label_desc;
 	if (defined $args->{namemangle}) {
 		$self->{__namemangle} = $args->{namemangle};
 	} else {
@@ -205,9 +207,11 @@ sub parsetest {
 
     $test_count++;
 
+    $desc = "$test_count $desc" if $self->{__desc_with_test_count};
+
     my $test = {
       'time'    => 0,
-      name      => uniquename($xml, "$test_count $desc"),
+      name      => uniquename($xml, $desc),
       classname => $name,
     };
 
