@@ -203,7 +203,8 @@ sub parsetest {
   my $num = qr/\d+/;
   
   my $tcb = sub {
-    my ($raw, $level, $ok, $num, $desc, $dir, $exp) = (@_, '', '');
+    my ($raw, $level, $ok, $num, $desc) = (@_);
+    $desc ||= '<no description>';
 
     $test_count++;
 
@@ -257,7 +258,7 @@ sub parsetest {
       }
       next if $dir;
 
-      $tcb->($l, $level, $ok, $num, $desc, $dir, $exp);
+      $tcb->($l, $level, $ok, $num, $desc);
     }
   }
 
