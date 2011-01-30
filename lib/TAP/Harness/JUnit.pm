@@ -277,7 +277,7 @@ sub parsetest {
         'Has a plan, successful tests, just too small amount of them',
       failure => {
         type    => 'Plan',
-        message => "Some test were not executed, The test died prematurely.",
+        message => "Some test were not executed, The test died prematurely (test count $test_count, plan $expected_count).",
         content => 'Bad plan',
       },
       };
