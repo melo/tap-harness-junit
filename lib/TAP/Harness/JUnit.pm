@@ -256,7 +256,7 @@ sub parsetest {
       {
         ($desc, $dir, $exp) = ($1, $2, $3);
       }
-      next if $dir;
+      $test_count++, next if $dir;
 
       $tcb->($l, $level, $ok, $num, $desc);
     }
